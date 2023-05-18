@@ -18,6 +18,9 @@ use ggml::{
 use memmap2::Mmap;
 use thiserror::Error;
 
+use tokenizers::models::bpe::BpeBuilder;
+use tokenizers::Tokenizer;
+
 #[derive(Debug, PartialEq, Clone, Copy, Eq, Default)]
 /// Information about the file.
 pub struct FileType {
@@ -262,6 +265,15 @@ pub enum LoadError {
         /// The paths that were found.
         paths: Vec<PathBuf>,
     },
+
+    /// The vocab file for the tokenizer could not be loaded.
+    ///
+    ///
+    #[error("could not load vocab file {path:?}")]
+    TokenizerLoadFailed {
+        /// The path that failed.
+        path: PathBuf,
+    },
 }
 impl From<util::FindAllModelFilesError> for LoadError {
     fn from(value: util::FindAllModelFilesError) -> Self {
@@ -325,6 +337,7 @@ pub trait TensorLoader<E: std::error::Error> {
 ///   store any information about the architecture.
 pub fn load<M: KnownModel>(
     path: &Path,
+    vocab_path: Option<&Path>,
     params: ModelParameters,
     overrides: Option<M::Overrides>,
     load_progress_callback: impl FnMut(LoadProgress),
@@ -359,6 +372,33 @@ pub fn load<M: KnownModel>(
         container_type,
         ..
     } = loader;
+
+    let tokenizer = if let Some(path) = vocab_path {
+        let tok = Tokenizer::from_file(path);
+        if tok.is_err() {
+            return Err(LoadError::TokenizerLoadFailed {
+                path: path.to_owned(),
+            });
+        }
+
+        tok.unwrap()
+    } else {
+        println!("Warning: No vocab file provided, trying to build vocabulary from ggml model.");
+
+        let mut vocab: HashMap<String, u32> = HashMap::new();
+
+        vocabulary.token_to_id.iter().for_each(|(k, v)| unsafe {
+            vocab.insert(String::from_utf8_unchecked(k.to_vec()), *v as u32);
+        });
+
+        let builder = BpeBuilder::new()
+            .fuse_unk(true)
+            .byte_fallback(true)
+            .vocab_and_merges(vocab, Vec::new())
+            .unk_token("<unk>".to_string());
+
+        Tokenizer::new(builder.build().unwrap())
+    };
 
     let quantization_version = (&hyperparameters as &M::Hyperparameters)
         .file_type()
@@ -453,7 +493,7 @@ pub fn load<M: KnownModel>(
         loaded_tensors: Default::default(),
     };
 
-    let model = KnownModel::new(hyperparameters, params, overrides, vocabulary, tl)?;
+    let model = KnownModel::new(hyperparameters, params, tokenizer, overrides, tl)?;
 
     (load_progress_callback)(LoadProgress::Loaded {
         file_size,

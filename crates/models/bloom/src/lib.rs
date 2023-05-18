@@ -6,8 +6,10 @@ use llm_base::{
     ggml,
     model::{common, HyperparametersWriteError},
     util, FileType, InferenceParameters, InferenceSession, InferenceSessionConfig, KnownModel,
-    Mmap, ModelParameters, OutputRequest, TokenId, Vocabulary,
+    Mmap, ModelParameters, OutputRequest, TokenId,
 };
+
+use tokenizers::Tokenizer;
 
 /// The BLOOM model. Ref: [Introducing BLOOM](https://bigscience.huggingface.co/blog/bloom)
 ///
@@ -17,7 +19,7 @@ pub struct Bloom {
     hyperparameters: Hyperparameters,
     n_context_tokens: usize,
 
-    vocabulary: Vocabulary,
+    tokenizer: Tokenizer,
     tok_embeddings: ggml::Tensor,
     norm: ggml::Tensor,
     norm_b: ggml::Tensor,
@@ -42,8 +44,8 @@ impl KnownModel for Bloom {
     fn new<E: std::error::Error>(
         hyperparameters: Self::Hyperparameters,
         params: ModelParameters,
+        tokenizer: Tokenizer,
         _overrides: Option<Self::Overrides>,
-        vocabulary: Vocabulary,
         tensor_loader: impl llm_base::TensorLoader<E>,
     ) -> Result<Self, E> {
         let mut tl = tensor_loader;
@@ -95,7 +97,7 @@ impl KnownModel for Bloom {
         Ok(Bloom {
             hyperparameters,
             n_context_tokens,
-            vocabulary,
+            tokenizer,
             tok_embeddings,
             norm,
             norm_b,
@@ -116,6 +118,7 @@ impl KnownModel for Bloom {
             self.hyperparameters.n_layer,
             self.hyperparameters.n_embd,
             self.hyperparameters.n_vocab,
+            false,
         )
     }
 
@@ -386,8 +389,8 @@ impl KnownModel for Bloom {
     }
 
     /// Returns the vocabulary used by this model.
-    fn vocabulary(&self) -> &Vocabulary {
-        &self.vocabulary
+    fn tokenizer(&self) -> &Tokenizer {
+        &self.tokenizer
     }
 
     fn n_context_tokens(&self) -> usize {
@@ -395,15 +398,11 @@ impl KnownModel for Bloom {
     }
 
     fn bot_token_id(&self) -> Option<TokenId> {
-        self.vocabulary.token_to_id.get("<s>".as_bytes()).copied()
+        Some(self.tokenizer.token_to_id("<s>").unwrap() as i32)
     }
 
     fn eot_token_id(&self) -> TokenId {
-        self.vocabulary
-            .token_to_id
-            .get("</s>".as_bytes())
-            .copied()
-            .unwrap()
+        self.tokenizer.token_to_id("</s>").unwrap() as i32
     }
 
     fn inference_parameters(&self) -> &InferenceParameters {

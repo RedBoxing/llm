@@ -8,8 +8,10 @@ use llm_base::{
     ggml,
     model::{common, HyperparametersWriteError},
     util, FileType, InferenceParameters, InferenceSession, InferenceSessionConfig, KnownModel,
-    LoadError, Mmap, ModelParameters, OutputRequest, TensorLoader, TokenId, Vocabulary,
+    LoadError, Mmap, ModelParameters, OutputRequest, TensorLoader, TokenId,
 };
+
+use tokenizers::Tokenizer;
 
 /// The GPT-J model. Ref: [GitHub](https://github.com/kingoflolz/mesh-transformer-jax/#gpt-j-6b)
 ///
@@ -19,7 +21,7 @@ pub struct GptJ {
     hyperparameters: Hyperparameters,
     n_context_tokens: usize,
 
-    vocabulary: Vocabulary,
+    tokenizer: Tokenizer,
 
     // normalization
     ln_f_g: Tensor,
@@ -52,8 +54,8 @@ impl KnownModel for GptJ {
     fn new<E: Error>(
         hyperparameters: Self::Hyperparameters,
         params: ModelParameters,
+        tokenizer: Tokenizer,
         _overrides: Option<Self::Overrides>,
-        vocabulary: Vocabulary,
         tensor_loader: impl TensorLoader<E>,
     ) -> Result<Self, E>
     where
@@ -97,7 +99,7 @@ impl KnownModel for GptJ {
         Ok(GptJ {
             hyperparameters,
             n_context_tokens,
-            vocabulary,
+            tokenizer,
             ln_f_g,
             ln_f_b,
             wte,
@@ -117,6 +119,7 @@ impl KnownModel for GptJ {
             self.hyperparameters.n_layer,
             self.hyperparameters.n_embd,
             self.hyperparameters.n_vocab,
+            false,
         )
     }
 
@@ -299,8 +302,8 @@ impl KnownModel for GptJ {
         common::update_session(session, &ctx0, input_tokens.len(), n);
     }
 
-    fn vocabulary(&self) -> &Vocabulary {
-        &self.vocabulary
+    fn tokenizer(&self) -> &Tokenizer {
+        &self.tokenizer
     }
 
     fn n_context_tokens(&self) -> usize {
@@ -312,11 +315,7 @@ impl KnownModel for GptJ {
     }
 
     fn eot_token_id(&self) -> TokenId {
-        self.vocabulary
-            .token_to_id
-            .get("<|endoftext|>".as_bytes())
-            .copied()
-            .unwrap()
+        self.tokenizer.token_to_id("<|endoftext|>").unwrap() as i32
     }
 
     fn inference_parameters(&self) -> &InferenceParameters {
@@ -418,7 +417,7 @@ impl GptJ {
         Self {
             hyperparameters: Default::default(),
             n_context_tokens: 0,
-            vocabulary: Default::default(),
+            tokenizer: Tokenizer::from_pretrained("", None).unwrap(),
             ln_f_g: context.new_f32(0.0),
             ln_f_b: context.new_f32(0.0),
             wte: context.new_f32(0.0),

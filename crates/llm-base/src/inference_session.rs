@@ -42,6 +42,10 @@ pub struct InferenceSession {
     #[doc(hidden)]
     pub memory_v: ggml::Tensor,
 
+    /// RWKV's State
+    #[doc(hidden)]
+    pub state: ggml::Tensor,
+
     /// How many tokens have been fed into the model's working memory so far.
     #[doc(hidden)]
     pub n_past: usize,
@@ -76,13 +80,16 @@ impl InferenceSession {
         output_request: &mut OutputRequest,
         mut callback: impl FnMut(&[u8]) -> Result<InferenceFeedback, E>,
     ) -> Result<(), InferenceError> {
-        let beginning_of_sentence = self.n_past == 0;
+        //let beginning_of_sentence = self.n_past == 0;
 
-        let vocab = model.vocabulary();
-        let prompt_tokens: Vec<TokenId> = vocab
-            .tokenize(prompt, beginning_of_sentence)?
+        let tokenizer = model.tokenizer();
+        let prompt_tokens: Vec<TokenId> = tokenizer
+            .encode(prompt, false)
+            .unwrap()
+            .get_ids()
+            .to_vec()
             .iter()
-            .map(|(_, tok)| *tok)
+            .map(|&id| id as TokenId)
             .collect();
 
         if self.n_past + prompt_tokens.len() >= model.n_context_tokens() {
@@ -97,7 +104,7 @@ impl InferenceSession {
                 if should_call_callback {
                     // NOTE: No string ever tokenizes to the end of sentence. So we
                     // can just return the id here.
-                    match callback(vocab.token(tk as usize)) {
+                    match callback(tokenizer.decode(vec![tk as u32], true).unwrap().as_bytes()) {
                         Err(e) => return Err(InferenceError::UserCallback(Some(Box::new(e)))),
                         Ok(f) => match f {
                             InferenceFeedback::Continue => (),
@@ -115,13 +122,13 @@ impl InferenceSession {
     }
 
     /// Infer the next token for this session.
-    pub fn infer_next_token<'v>(
+    pub fn infer_next_token(
         &mut self,
-        model: &'v dyn Model,
+        model: &dyn Model,
         params: &InferenceParameters,
         output_request: &mut OutputRequest,
         rng: &mut impl rand::Rng,
-    ) -> Result<&'v [u8], InferenceError> {
+    ) -> Result<Vec<u8>, InferenceError> {
         if self.n_past + 1 >= model.n_context_tokens() {
             return Err(InferenceError::ContextFull);
         }
@@ -139,7 +146,12 @@ impl InferenceSession {
         if next_token as TokenId == model.eot_token_id() {
             Err(InferenceError::EndOfText)
         } else {
-            Ok(model.vocabulary().token(next_token as usize))
+            Ok(model
+                .tokenizer()
+                .decode(vec![next_token as u32], true)
+                .unwrap()
+                .as_bytes()
+                .to_vec())
         }
     }
 
@@ -165,9 +177,13 @@ impl InferenceSession {
             let mut token_utf8_buf = TokenUtf8Buffer::new();
             for token_id in &self.tokens {
                 // Buffer the token until it's valid UTF-8, then call the callback.
-                if let Some(tokens) =
-                    token_utf8_buf.push(model.vocabulary().token(*token_id as usize))
-                {
+                if let Some(tokens) = token_utf8_buf.push(
+                    model
+                        .tokenizer()
+                        .decode(vec![*token_id as u32], true)
+                        .unwrap()
+                        .as_bytes(),
+                ) {
                     if let Err(e) = callback(InferenceResponse::SnapshotToken(tokens)) {
                         return Err(InferenceError::UserCallback(Some(Box::new(e))));
                     }
@@ -207,7 +223,7 @@ impl InferenceSession {
             };
 
             // Buffer the token until it's valid UTF-8, then call the callback.
-            if let Some(tokens) = token_utf8_buf.push(token) {
+            if let Some(tokens) = token_utf8_buf.push(&token) {
                 match callback(InferenceResponse::InferredToken(tokens)) {
                     Err(e) => return Err(InferenceError::UserCallback(Some(Box::new(e)))),
                     Ok(f) => match f {
@@ -331,6 +347,9 @@ impl InferenceSession {
         let memory_v = unsafe {
             std::slice::from_raw_parts(self.memory_v.data() as *mut u8, self.memory_v.nbytes())
         };
+        let state = unsafe {
+            std::slice::from_raw_parts(self.state.data() as *mut u8, self.state.nbytes())
+        };
 
         InferenceSnapshotRef {
             npast: self.n_past,
@@ -339,6 +358,7 @@ impl InferenceSession {
             logits: self.last_logits.clone(),
             memory_k,
             memory_v,
+            state,
         }
     }
 
@@ -356,6 +376,11 @@ impl InferenceSession {
                 self_size: session.memory_k.nbytes() + session.memory_v.nbytes(),
                 input_size: snapshot.memory_k.len() + snapshot.memory_v.len(),
             });
+        } else if session.state.nbytes() != snapshot.state.len() {
+            return Err(SnapshotError::MemorySizeMismatch {
+                self_size: session.state.nbytes(),
+                input_size: snapshot.state.len(),
+            });
         }
 
         // SAFETY: We have exclusive access to Session, which means no one else
@@ -364,6 +389,7 @@ impl InferenceSession {
         unsafe {
             session.memory_k.write_data(&snapshot.memory_k);
             session.memory_v.write_data(&snapshot.memory_v);
+            session.state.write_data(&snapshot.state);
         }
 
         session.n_past = snapshot.npast;
@@ -381,22 +407,28 @@ impl InferenceSession {
         n_layer: usize,
         n_embd: usize,
         n_vocab: usize,
+        is_rwkv: bool, //TODO: Find a better way to do this
     ) -> InferenceSession {
         let ctx_size = {
             let mut ctx_size = 0;
-            ctx_size += mulf!(
-                n_ctx,
-                n_layer,
-                n_embd,
-                ggml::type_sizef(config.memory_k_type.into())
-            ); // memory_k
-            ctx_size += mulf!(
-                n_ctx,
-                n_layer,
-                n_embd,
-                ggml::type_sizef(config.memory_v_type.into())
-            ); // memory_v
-            ctx_size += (5 + 10 * n_layer) * 256; // object overhead
+            if is_rwkv {
+                ctx_size += n_layer * 5 * n_embd * 4;
+                ctx_size *= 2; // for some reason needed 720 extra bytes
+            } else {
+                ctx_size += mulf!(
+                    n_ctx,
+                    n_layer,
+                    n_embd,
+                    ggml::type_sizef(config.memory_k_type.into())
+                ); // memory_k
+                ctx_size += mulf!(
+                    n_ctx,
+                    n_layer,
+                    n_embd,
+                    ggml::type_sizef(config.memory_v_type.into())
+                ); // memory_v
+                ctx_size += (5 + 10 * n_layer) * 256; // object overhead
+            }
             ctx_size
         };
 
@@ -405,8 +437,28 @@ impl InferenceSession {
         // Initialize key + value memory tensors
         let n_mem = n_layer * n_ctx;
         let n_elements = n_embd * n_mem;
-        let memory_k = session_ctx.new_tensor_1d(config.memory_k_type.into(), n_elements);
-        let memory_v = session_ctx.new_tensor_1d(config.memory_v_type.into(), n_elements);
+        let memory_k = session_ctx.new_tensor_1d(
+            config.memory_k_type.into(),
+            if is_rwkv { 0 } else { n_elements },
+        );
+        let memory_v = session_ctx.new_tensor_1d(
+            config.memory_v_type.into(),
+            if is_rwkv { 0 } else { n_elements },
+        );
+        let state = session_ctx.new_tensor_1d(
+            ggml::Type::F32,
+            if is_rwkv { n_layer * 5 * n_embd } else { 0 },
+        );
+
+        if is_rwkv {
+            state.set_f32(0.0);
+
+            for i in 0..n_layer {
+                session_ctx
+                    .op_view_1d(&state, n_embd, (5 * i + 4) * n_embd * 4)
+                    .set_f32(-1e30);
+            }
+        }
 
         InferenceSession {
             _session_ctx: session_ctx,
@@ -414,6 +466,7 @@ impl InferenceSession {
             config,
             memory_k,
             memory_v,
+            state,
             n_past: 0,
             mem_per_token: 0,
             tokens: vec![],
@@ -427,6 +480,7 @@ impl Clone for InferenceSession {
         let context = ggml::Context::init(self.memory_size, true);
         let memory_k = context.new_tensor_1d(self.memory_k.get_type(), self.memory_k.nelements());
         let memory_v = context.new_tensor_1d(self.memory_v.get_type(), self.memory_v.nelements());
+        let state = context.new_tensor_1d(self.state.get_type(), self.state.nelements());
 
         Self {
             _session_ctx: context,
@@ -434,6 +488,7 @@ impl Clone for InferenceSession {
             config: self.config,
             memory_k,
             memory_v,
+            state,
             n_past: self.n_past,
             mem_per_token: self.mem_per_token,
             tokens: self.tokens.clone(),
@@ -482,6 +537,9 @@ pub struct InferenceSnapshotRef<'a> {
     /// The contents of the 'value' memory tensor.
     #[serde(with = "serde_bytes")]
     pub memory_v: &'a [u8],
+    /// The contents of the 'state' memory tensor.
+    #[serde(with = "serde_bytes")]
+    pub state: &'a [u8],
 }
 impl InferenceSnapshotRef<'_> {
     /// Creates an owned [InferenceSnapshot] from this [InferenceSnapshotRef].
@@ -495,6 +553,7 @@ impl InferenceSnapshotRef<'_> {
             last_logits: self.logits.clone(),
             memory_k: self.memory_k.to_vec(),
             memory_v: self.memory_v.to_vec(),
+            state: self.state.to_vec(),
         }
     }
 }
@@ -518,6 +577,9 @@ pub struct InferenceSnapshot {
     /// The contents of the 'value' memory tensor.
     #[serde(with = "serde_bytes")]
     pub memory_v: Vec<u8>,
+    /// The contents of the 'state' memory tensor.
+    #[serde(with = "serde_bytes")]
+    pub state: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -1,14 +1,15 @@
 [package]
-name = "llm-gpt2"
+name = "llm-rwkv"
 version = "0.1.1"
 license = { workspace = true }
 repository = { workspace = true }
-description = "An implementation of GPT-2 for the `llm` ecosystem."
+description = "An implementation of RWKV for the `llm` ecosystem."
 edition = "2021"
 readme = "../../../README.md"
 
 [dependencies]
-llm-base = { path = "../../llm-base", version = "0.1.1" }
+llm-base = { path = "../../llm-base" }
+ggml = { path = "../../ggml" }
 
 bytemuck = { workspace = true }
 tokenizers = "0.13.3"

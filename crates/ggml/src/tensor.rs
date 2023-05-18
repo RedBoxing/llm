@@ -124,4 +124,18 @@ impl Tensor {
         let data = unsafe { sys::ggml_get_data(self.ptr.as_ptr()).add(offset) };
         std::ptr::copy_nonoverlapping(data, dst as *mut _ as _, dst.len())
     }
+
+    /// Fill the tensor with value.
+    pub fn set_f32(&self, value: f32) {
+        unsafe {
+            sys::ggml_set_f32(self.ptr.as_ptr(), value);
+        }
+    }
+
+    /// Fill the tensor with value.
+    pub fn set_i32_1d(&self, i: i32, value: i32) {
+        unsafe {
+            sys::ggml_set_i32_1d(self.ptr.as_ptr(), i, value);
+        }
+    }
 }

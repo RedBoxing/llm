@@ -14,6 +14,8 @@ use llm_base::{
 #[cfg(feature = "convert")]
 pub mod convert;
 
+use tokenizers::Tokenizer;
+
 mod old_loader;
 
 /// The LLaMA model. Ref: [Introducing LLaMA](https://ai.facebook.com/blog/large-language-model-llama-meta-ai/)
@@ -24,7 +26,7 @@ pub struct Llama {
     hyperparameters: Hyperparameters,
     n_context_tokens: usize,
 
-    vocabulary: Vocabulary,
+    tokenizer: Tokenizer,
 
     tok_embeddings: ggml::Tensor,
 
@@ -51,8 +53,8 @@ impl KnownModel for Llama {
     fn new<E: Error>(
         hyperparameters: Self::Hyperparameters,
         params: ModelParameters,
+        tokenizer: Tokenizer,
         _overrides: Option<Self::Overrides>,
-        vocabulary: Vocabulary,
         tensor_loader: impl TensorLoader<E>,
     ) -> Result<Self, E> {
         let mut tl = tensor_loader;
@@ -89,7 +91,7 @@ impl KnownModel for Llama {
         Ok(Self {
             hyperparameters,
             n_context_tokens,
-            vocabulary,
+            tokenizer,
             tok_embeddings,
             norm,
             output,
@@ -108,6 +110,7 @@ impl KnownModel for Llama {
             self.hyperparameters.n_layer,
             self.hyperparameters.n_embd,
             self.hyperparameters.n_vocab,
+            false,
         )
     }
 
@@ -335,8 +338,8 @@ impl KnownModel for Llama {
     }
 
     /// Returns the vocabulary used by this model.
-    fn vocabulary(&self) -> &Vocabulary {
-        &self.vocabulary
+    fn tokenizer(&self) -> &Tokenizer {
+        &self.tokenizer
     }
 
     fn n_context_tokens(&self) -> usize {
@@ -368,7 +371,7 @@ impl Llama {
         Self {
             hyperparameters: Default::default(),
             n_context_tokens: 0,
-            vocabulary: Default::default(),
+            tokenizer: Tokenizer::from_pretrained("", None).unwrap(),
             tok_embeddings,
             norm,
             output,

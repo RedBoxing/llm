@@ -146,8 +146,8 @@ pub fn load<E: Error, R: BufRead + Seek>(
 
     match container_type {
         ContainerType::Ggml
-        | ContainerType::Ggmf(1)
-        | ContainerType::Ggjt(1 | 2)
+        | ContainerType::Ggmf(1 | 100)
+        | ContainerType::Ggjt(1 | 2 | 100)
         | ContainerType::Ggla(1) => {}
         _ => return Err(LoadError::InvalidFormatVersion(container_type)),
     }
@@ -160,6 +160,7 @@ pub fn load<E: Error, R: BufRead + Seek>(
     let hparams = handler
         .read_hyperparameters(reader)
         .map_err(LoadError::ImplementationError)?;
+
     let n_vocab = hparams.n_vocab;
 
     // Load vocabulary

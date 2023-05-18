@@ -13,8 +13,10 @@ use thiserror::Error;
 
 use crate::{
     loader::TensorLoader, vocabulary::TokenId, FileType, InferenceParameters, InferenceSession,
-    InferenceSessionConfig, LoadError, LoadProgress, Vocabulary,
+    InferenceSessionConfig, LoadError, LoadProgress,
 };
+
+use tokenizers::Tokenizer;
 
 /// Common functions for model evaluation
 pub mod common;
@@ -114,6 +116,7 @@ pub trait KnownModel: Send + Sync {
     /// is a helper function on top of [llm_base::load](crate::load).
     fn load(
         path: &Path,
+        vocab_path: Option<&Path>,
         params: ModelParameters,
         overrides: Option<Self::Overrides>,
         load_progress_callback: impl FnMut(LoadProgress),
@@ -121,7 +124,7 @@ pub trait KnownModel: Send + Sync {
     where
         Self: Sized,
     {
-        crate::load(path, params, overrides, load_progress_callback)
+        crate::load(path, vocab_path, params, overrides, load_progress_callback)
     }
 
     /// Creates a new model from the provided [ModelParameters] hyperparameters.
@@ -129,8 +132,8 @@ pub trait KnownModel: Send + Sync {
     fn new<E: Error>(
         hyperparameters: Self::Hyperparameters,
         params: ModelParameters,
+        tokenizer: Tokenizer,
         overrides: Option<Self::Overrides>,
-        vocabulary: Vocabulary,
         tensor_loader: impl TensorLoader<E>,
     ) -> Result<Self, E>
     where
@@ -152,7 +155,7 @@ pub trait KnownModel: Send + Sync {
     );
 
     /// Get the vocabulary (loaded from the GGML file) for this model.
-    fn vocabulary(&self) -> &Vocabulary;
+    fn tokenizer(&self) -> &Tokenizer;
 
     /// Get the context size (configured with [ModelParameters::n_context_tokens]) used by
     /// this model.
@@ -189,7 +192,7 @@ pub trait Model: Send + Sync {
     );
 
     /// Get the vocabulary (loaded from the GGML file) for this model.
-    fn vocabulary(&self) -> &Vocabulary;
+    fn tokenizer(&self) -> &Tokenizer;
 
     /// Get the context size (configured with [ModelParameters::n_context_tokens]) used by
     /// this model.
@@ -221,8 +224,8 @@ impl<H: Hyperparameters, M: KnownModel<Hyperparameters = H>> Model for M {
         KnownModel::evaluate(self, session, params, input_tokens, output_request)
     }
 
-    fn vocabulary(&self) -> &Vocabulary {
-        KnownModel::vocabulary(self)
+    fn tokenizer(&self) -> &Tokenizer {
+        KnownModel::tokenizer(self)
     }
 
     fn n_context_tokens(&self) -> usize {

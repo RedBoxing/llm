@@ -9,5 +9,6 @@ readme = "../../../README.md"
 
 [dependencies]
 llm-base = { path = "../../llm-base", version = "0.1.1" }
+tokenizers = "0.13.3"
 
 bytemuck = { workspace = true }

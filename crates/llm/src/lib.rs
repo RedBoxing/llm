@@ -21,6 +21,8 @@
 //! let llama = llm::load::<llm::models::Llama>(
 //!     // path to GGML file
 //!     std::path::Path::new("/path/to/model"),
+//!     // optional path to a vocabulary file
+//!     None,
 //!     // llm::ModelParameters
 //!     Default::default(),
 //!     // llm::KnownModel::Overrides
@@ -99,6 +101,8 @@ pub mod models {
     pub use llm_llama::{self as llama, Llama};
     #[cfg(feature = "mpt")]
     pub use llm_mpt::{self as mpt, Mpt};
+    #[cfg(feature = "rwkv")]
+    pub use llm_rwkv::{self as rwkv, Rwkv};
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -125,11 +129,14 @@ pub enum ModelArchitecture {
     #[cfg(feature = "mpt")]
     /// [MPT](llm_mpt)
     Mpt,
+    #[cfg(feature = "rwkv")]
+    /// [RWKV](llm_rwkv)
+    Rwkv,
 }
 
 impl ModelArchitecture {
     /// All available model architectures
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         #[cfg(feature = "bloom")]
         Self::Bloom,
         #[cfg(feature = "gpt2")]
@@ -144,6 +151,8 @@ impl ModelArchitecture {
         Self::RedPajama,
         #[cfg(feature = "mpt")]
         Self::Mpt,
+        #[cfg(feature = "rwkv")]
+        Self::Rwkv,
     ];
 }
 
@@ -189,8 +198,10 @@ impl FromStr for ModelArchitecture {
             "redpajama" => Ok(RedPajama),
             #[cfg(feature = "mpt")]
             "mpt" => Ok(Mpt),
-            _ => Err(UnsupportedModelArchitecture(format!(
-                "{s} is not a supported model architecture"
+            #[cfg(feature = "rwkv")]
+            "rwkv" => Ok(Rwkv),
+            m => Err(UnsupportedModelArchitecture(format!(
+                "{m} is not a supported model architecture"
             ))),
         }
     }
@@ -215,6 +226,8 @@ impl Display for ModelArchitecture {
             RedPajama => write!(f, "RedPajama"),
             #[cfg(feature = "mpt")]
             Mpt => write!(f, "MPT"),
+            #[cfg(feature = "rwkv")]
+            Rwkv => write!(f, "RWKV"),
         }
     }
 }
@@ -230,6 +243,7 @@ impl Display for ModelArchitecture {
 pub fn load_dynamic(
     architecture: ModelArchitecture,
     path: &Path,
+    vocabulary_path: Option<&Path>,
     params: ModelParameters,
     overrides: Option<ModelDynamicOverrides>,
     load_progress_callback: impl FnMut(LoadProgress),
@@ -238,12 +252,14 @@ pub fn load_dynamic(
 
     fn load_model<M: KnownModel + 'static>(
         path: &Path,
+        vocabulary_path: Option<&Path>,
         params: ModelParameters,
         overrides: Option<ModelDynamicOverrides>,
         load_progress_callback: impl FnMut(LoadProgress),
     ) -> Result<Box<dyn Model>, LoadError> {
         Ok(Box::new(load::<M>(
             path,
+            vocabulary_path,
             params,
             overrides.map(|o| o.into()),
             load_progress_callback,
@@ -252,18 +268,49 @@ pub fn load_dynamic(
 
     let model: Box<dyn Model> = match architecture {
         #[cfg(feature = "bloom")]
-        Bloom => load_model::<models::Bloom>(path, params, overrides, load_progress_callback)?,
+        Bloom => load_model::<models::Bloom>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
         #[cfg(feature = "gpt2")]
-        Gpt2 => load_model::<models::Gpt2>(path, params, overrides, load_progress_callback)?,
+        Gpt2 => load_model::<models::Gpt2>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
         #[cfg(feature = "gptj")]
-        GptJ => load_model::<models::GptJ>(path, params, overrides, load_progress_callback)?,
+        GptJ => load_model::<models::GptJ>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
         #[cfg(feature = "llama")]
-        Llama => load_model::<models::Llama>(path, params, overrides, load_progress_callback)?,
+        Llama => load_model::<models::Llama>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
         #[cfg(feature = "gptneox")]
-        GptNeoX => load_model::<models::GptNeoX>(path, params, overrides, load_progress_callback)?,
+        GptNeoX => load_model::<models::GptNeoX>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
         #[cfg(feature = "gptneox")]
         RedPajama => load_model::<models::GptNeoX>(
             path,
+            vocabulary_path,
             params,
             {
                 let mut overrides = overrides.unwrap_or_default();
@@ -275,7 +322,21 @@ pub fn load_dynamic(
             load_progress_callback,
         )?,
         #[cfg(feature = "mpt")]
-        Mpt => load_model::<models::Mpt>(path, params, overrides, load_progress_callback)?,
+        Mpt => load_model::<models::Mpt>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
+        #[cfg(feature = "rwkv")]
+        Rwkv => load_model::<models::Rwkv>(
+            path,
+            vocabulary_path,
+            params,
+            overrides,
+            load_progress_callback,
+        )?,
     };
 
     Ok(model)

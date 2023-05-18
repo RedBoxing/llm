@@ -6,8 +6,10 @@ use llm_base::{
     ggml,
     model::{common, HyperparametersWriteError},
     util, FileType, InferenceParameters, InferenceSession, InferenceSessionConfig, KnownModel,
-    LoadError, ModelParameters, OutputRequest, TokenId, Vocabulary,
+    LoadError, ModelParameters, OutputRequest, TokenId,
 };
+
+use tokenizers::Tokenizer;
 
 /// The MosaicML Pretrained Transformer (MPT) model. Ref: [Mosaic ML](https://www.mosaicml.com/blog/mpt-7b)
 ///
@@ -17,7 +19,7 @@ pub struct Mpt {
     hyperparameters: Hyperparameters,
     n_context_tokens: usize,
 
-    vocabulary: Vocabulary,
+    tokenizer: Tokenizer,
 
     // position embedding
     wte_weight: Tensor,
@@ -44,8 +46,8 @@ impl KnownModel for Mpt {
     fn new<E: std::error::Error>(
         hyperparameters: Self::Hyperparameters,
         params: ModelParameters,
+        tokenizer: Tokenizer,
         _overrides: Option<Self::Overrides>,
-        vocabulary: Vocabulary,
         tensor_loader: impl llm_base::TensorLoader<E>,
     ) -> Result<Self, E> {
         let mut tl = tensor_loader;
@@ -82,7 +84,7 @@ impl KnownModel for Mpt {
         Ok(Mpt {
             hyperparameters,
             n_context_tokens,
-            vocabulary,
+            tokenizer,
             wte_weight,
             norm_f_weight,
             layers,
@@ -99,6 +101,7 @@ impl KnownModel for Mpt {
             self.hyperparameters.n_layer,
             self.hyperparameters.n_embd,
             self.hyperparameters.n_vocab,
+            false,
         )
     }
 
@@ -274,9 +277,8 @@ impl KnownModel for Mpt {
         common::update_session(session, &ctx0, input_tokens.len(), n);
     }
 
-    /// Returns the vocabulary used by this model.
-    fn vocabulary(&self) -> &Vocabulary {
-        &self.vocabulary
+    fn tokenizer(&self) -> &Tokenizer {
+        &self.tokenizer
     }
 
     fn n_context_tokens(&self) -> usize {
@@ -284,18 +286,17 @@ impl KnownModel for Mpt {
     }
 
     fn bot_token_id(&self) -> Option<TokenId> {
-        self.vocabulary
-            .token_to_id
-            .get("<|padding|>".as_bytes())
-            .copied()
+        Some(
+            self.tokenizer
+                .token_to_id("<|padding|>")
+                .expect("the MPT vocabulary contains a <|padding|> token") as TokenId,
+        )
     }
 
     fn eot_token_id(&self) -> TokenId {
-        self.vocabulary
-            .token_to_id
-            .get("<|endoftext|>".as_bytes())
-            .copied()
-            .unwrap()
+        self.tokenizer
+            .token_to_id("<|endoftext|>")
+            .expect("the MPT vocabulary contains a <|endoftext|> token") as TokenId
     }
 
     fn inference_parameters(&self) -> &InferenceParameters {

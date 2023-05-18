@@ -1,29 +1,40 @@
+use clap::Parser;
 use llm::{
     load_progress_callback_stdout as load_callback, InferenceFeedback, InferenceRequest,
     InferenceResponse, ModelArchitecture,
 };
-use std::{convert::Infallible, io::Write, path::Path};
+use std::{convert::Infallible, io::Write, path::PathBuf};
+
+#[derive(Parser)]
+struct Args {
+    model_architecture: String,
+    model_path: PathBuf,
+    prompt: Option<String>,
+
+    #[arg(short, long)]
+    overrides: Option<String>,
+
+    #[arg(short, long)]
+    vocabulary_path: Option<PathBuf>,
+}
 
 fn main() {
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    if raw_args.len() < 2 {
-        println!("Usage: cargo run --release --example inference <model_architecture> <model_path> [prompt] [overrides, json]");
-        std::process::exit(1);
-    }
+    let args = Args::parse();
 
-    let model_architecture: ModelArchitecture = raw_args[0].parse().unwrap();
-    let model_path = Path::new(&raw_args[1]);
-    let prompt = raw_args
-        .get(2)
-        .map(|s| s.as_str())
+    let model_architecture: ModelArchitecture = args.model_architecture.parse().unwrap();
+    let model_path = args.model_path;
+    let prompt = args
+        .prompt
+        .as_deref()
         .unwrap_or("Rust is a cool programming language because");
-    let overrides = raw_args.get(3).map(|s| serde_json::from_str(s).unwrap());
+    let overrides = args.overrides.map(|s| serde_json::from_str(&s).unwrap());
 
     let now = std::time::Instant::now();
 
     let model = llm::load_dynamic(
         model_architecture,
-        model_path,
+        &model_path,
+        args.vocabulary_path.as_deref(),
         Default::default(),
         overrides,
         load_callback,

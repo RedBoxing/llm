@@ -61,7 +61,7 @@
           "kind": "example"
         }
       },
-      "args": ["llama", "${env:HOME}/.ggml-models/gpt4all-7b.bin"],
+      "args": ["llama", "${env:HOME}/.ggml-models/llama-13b-q4_0.bin", "${env:HOME}/llama-dl/tokenizer.json"],
       "cwd": "${workspaceFolder}"
     },
     {
@@ -118,6 +118,20 @@
         }
       },
       "args": ["llama", "${env:HOME}/.ggml-models/wizardlm-7b.bin"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug RWKV Inference",
+      "cargo": {
+        "args": ["build", "--example=inference", "--package=llm"],
+        "filter": {
+          "name": "inference",
+          "kind": "example"
+        }
+      },
+      "args": ["rwkv", "${env:HOME}/.ggml-models/rwkv-14b.bin", "${env:HOME}/RWKV/rwkv.cpp/rwkv/20B_tokenizer.json"],
       "cwd": "${workspaceFolder}"
     }
   ]

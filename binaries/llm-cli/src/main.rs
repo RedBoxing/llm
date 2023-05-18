@@ -45,6 +45,7 @@ fn main() -> Result<()> {
             }),
         ),
         Args::Mpt { args } => handle_args::<llm::models::Mpt>(args, None),
+        Args::Rwkv { args } => handle_args::<llm::models::Rwkv>(args, None),
     }
 }
 
@@ -55,7 +56,7 @@ fn handle_args<M: llm::KnownModel + 'static>(
     match args {
         BaseArgs::Infer(args) => infer::<M>(args, overrides),
         BaseArgs::Info(args) => info::<M>(args),
-        BaseArgs::PromptTokens(args) => prompt_tokens::<M>(args),
+        BaseArgs::PromptTokens(args) => prompt_tokens::<M>(args, overrides),
         BaseArgs::Repl(args) => interactive::<M>(args, overrides, false),
         BaseArgs::Chat(args) => interactive::<M>(args, overrides, true),
         BaseArgs::Quantize(args) => quantize::<M>(args),
@@ -163,10 +164,13 @@ fn info<M: llm::KnownModel + 'static>(args: &cli_args::Info) -> Result<()> {
     Ok(())
 }
 
-fn prompt_tokens<M: llm::KnownModel + 'static>(args: &cli_args::PromptTokens) -> Result<()> {
+fn prompt_tokens<M: llm::KnownModel + 'static>(
+    args: &cli_args::PromptTokens,
+    overrides: Option<M::Overrides>,
+) -> Result<()> {
     let prompt = load_prompt_file_with_prompt(&args.prompt_file, args.prompt.as_deref());
-    let model = args.model_load.load::<M>(None)?;
-    let toks = match model.vocabulary().tokenize(&prompt, false) {
+    let model = args.model_load.load::<M>(overrides)?;
+    let toks = match model.tokenizer().encode(prompt, false) {
         Ok(toks) => toks,
         Err(e) => {
             log::error!("Could not tokenize prompt: {e}");
@@ -176,15 +180,17 @@ fn prompt_tokens<M: llm::KnownModel + 'static>(args: &cli_args::PromptTokens) ->
     log::info!("=== Dumping prompt tokens:");
     log::info!(
         "{}",
-        toks.iter()
-            .map(|(_, tid)| tid.to_string())
+        toks.get_ids()
+            .iter()
+            .map(|tid| tid.to_string())
             .collect::<Vec<_>>()
             .join(", ")
     );
     log::info!(
         "{}",
-        toks.iter()
-            .map(|(s, tid)| format!("{s:?}:{tid}"))
+        toks.get_ids()
+            .iter()
+            .map(|tid| format!("s:?:{tid}"))
             .collect::<Vec<_>>()
             .join(", ")
     );

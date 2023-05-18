@@ -1,21 +1,30 @@
+use clap::Parser;
 use llm::{
     InferenceFeedback, InferenceRequest, InferenceResponse, InferenceStats, LoadProgress,
     ModelArchitecture,
 };
 use rustyline::error::ReadlineError;
 use spinoff::{spinners::Dots2, Spinner};
-use std::{convert::Infallible, io::Write, path::Path, time::Instant};
+use std::{convert::Infallible, io::Write, path::PathBuf, time::Instant};
+
+#[derive(Parser)]
+struct Args {
+    model_architecture: String,
+    model_path: PathBuf,
+
+    #[arg(short, long)]
+    overrides: Option<String>,
+
+    #[arg(short, long)]
+    vocabulary_path: Option<PathBuf>,
+}
 
 fn main() {
-    let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    if raw_args.len() < 2 {
-        println!("Usage: cargo run --release --example vicuna-chat <model_architecture> <model_path> [overrides, json]");
-        std::process::exit(1);
-    }
+    let args = Args::parse();
 
-    let model_architecture: ModelArchitecture = raw_args[0].parse().unwrap();
-    let model_path = Path::new(&raw_args[1]);
-    let overrides = raw_args.get(2).map(|s| serde_json::from_str(s).unwrap());
+    let model_architecture: ModelArchitecture = args.model_architecture.parse().unwrap();
+    let model_path = args.model_path;
+    let overrides = args.overrides.map(|s| serde_json::from_str(&s).unwrap());
     let sp = Some(Spinner::new(Dots2, "Loading model...", None));
 
     let now = Instant::now();
@@ -23,7 +32,8 @@ fn main() {
 
     let model = llm::load_dynamic(
         model_architecture,
-        model_path,
+        &model_path,
+        args.vocabulary_path.as_deref(),
         Default::default(),
         overrides,
         load_progress_callback(sp, now, prev_load_time),
